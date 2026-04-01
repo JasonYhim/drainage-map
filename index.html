@@ -73,7 +73,7 @@ input[type=range]::-webkit-slider-thumb{appearance:none;width:12px;height:12px;b
 .cv-wrap.pan{cursor:grab;}
 .cv-wrap.pan.dragging{cursor:grabbing;}
 .cv-wrap.sel{cursor:default;}
-#cvMain,#cvDraw{position:absolute;top:0;left:0;display:block;}
+#cvMain{position:absolute;top:0;left:0;display:block;}#cvDraw{position:absolute;top:0;left:0;display:block;pointer-events:none;}
 
 /* MINIMAP */
 .minimap{position:absolute;bottom:10px;right:10px;width:160px;height:60px;background:rgba(15,20,30,.9);border:1px solid rgba(255,255,255,.15);border-radius:5px;overflow:hidden;cursor:pointer;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.4);}
@@ -313,12 +313,13 @@ const ZONES={
   '6구역':{grade:'C',color:'#dc2626',period:'-',bounds:[0,H1,V1,1-H1],items:[]},
 };
 const LEGEND=[
-  {id:'fence', name:'안전휀스',          color:'#FF00FF',type:'line', hint:'클릭→점 추가, Enter=완료'},
-  {id:'py',    name:'산마루측구 (PY배수로)',color:'#0066FF',type:'line', hint:'클릭→점 추가, Enter=완료'},
-  {id:'flume', name:'산마루측구 (플륨관)', color:'#FFA500',type:'line', hint:'클릭→점 추가, Enter=완료'},
-  {id:'block', name:'토사 막힘',          color:'#FF4444',type:'rect', hint:'드래그로 영역 지정'},
-  {id:'channel',name:'도수로',            color:'#009900',type:'line', hint:'클릭→점 추가, Enter=완료'},
-  {id:'sump',  name:'집수정',             color:'#CC8800',type:'circle',hint:'클릭으로 배치'},
+  {id:'fence',  name:'안전휀스',              color:'#8B4513',type:'dotline', hint:'클릭→점 추가, Enter=완료'},
+  {id:'py',     name:'산마루측구 (PY배수로)',  color:'#00AA00',type:'line',    hint:'클릭→점 추가, Enter=완료'},
+  {id:'flume',  name:'산마루측구 (플륨관)',    color:'#0000FF',type:'line',    hint:'클릭→점 추가, Enter=완료'},
+  {id:'block',  name:'토사 막힘',             color:'#FF4444',type:'dotfill', hint:'드래그로 영역 지정'},
+  {id:'channel',name:'도수로',               color:'#FFB800',type:'dblline', hint:'클릭→점 추가, Enter=완료'},
+  {id:'sump',   name:'집수정',               color:'#FFB800',type:'rect',    hint:'클릭으로 배치'},
+  {id:'open',   name:'개거 (콘크리트 V형 개거)','color':'#FF00FF',type:'line', hint:'클릭→점 추가, Enter=완료'},
 ];
 const LAYERS={sat:true,dwg:true,user:true,pts:true};
 const OPA={sat:.7,dwg:1.0};
@@ -573,14 +574,45 @@ function drawObj(obj,sel){
   const leg=LEGEND.find(l=>l.id===obj.legendId);if(!leg)return;
   ctx.save();
   if(sel){ctx.shadowColor=leg.color;ctx.shadowBlur=8/vp.s;}
-  ctx.strokeStyle=leg.color;ctx.lineWidth=2.5/vp.s;ctx.fillStyle=leg.color+'44';
+  const lw=2.5/vp.s;
+  ctx.strokeStyle=leg.color;ctx.lineWidth=lw;ctx.fillStyle=leg.color+'44';
+
   if(obj.type==='line'&&obj.pts&&obj.pts.length>=2){
+    // 타입별 선 스타일
+    if(leg.type==='dotline'){ctx.setLineDash([lw*2,lw*2]);}
+    else if(leg.type==='dblline'){
+      // 이중선: 위아래 각각
+      const off=lw*1.5;
+      for(const dy of [-off,off]){
+        ctx.beginPath();
+        ctx.moveTo(obj.pts[0].x,obj.pts[0].y+dy);
+        for(const p of obj.pts.slice(1))ctx.lineTo(p.x,p.y+dy);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);ctx.restore();return;  // 이중선은 여기서 종료
+    }
     ctx.beginPath();ctx.moveTo(obj.pts[0].x,obj.pts[0].y);
     for(const p of obj.pts.slice(1))ctx.lineTo(p.x,p.y);ctx.stroke();
+    ctx.setLineDash([]);
     for(const p of obj.pts){ctx.beginPath();ctx.arc(p.x,p.y,4/vp.s,0,Math.PI*2);ctx.fillStyle=leg.color;ctx.fill();}
   } else if(obj.x!=null){
-    if(obj.type==='circle'){ctx.beginPath();ctx.arc(obj.x+obj.w/2,obj.y+obj.h/2,Math.min(obj.w,obj.h)/2,0,Math.PI*2);ctx.fill();ctx.stroke();}
-    else{ctx.fillRect(obj.x,obj.y,obj.w,obj.h);ctx.strokeRect(obj.x,obj.y,obj.w,obj.h);}
+    if(leg.type==='rect'){
+      // 집수정: 테두리만
+      ctx.strokeRect(obj.x,obj.y,obj.w,obj.h);
+    } else if(leg.type==='dotfill'){
+      // 토사막힘: 노란 배경 + 빨간 점
+      ctx.fillStyle='#FFD700';ctx.fillRect(obj.x,obj.y,obj.w,obj.h);
+      ctx.strokeRect(obj.x,obj.y,obj.w,obj.h);
+      const r=Math.min(obj.h,8/vp.s)*0.4;
+      const spacing=r*2.5;
+      let xx=obj.x+r;
+      while(xx<obj.x+obj.w-r){
+        ctx.beginPath();ctx.arc(xx,obj.y+obj.h/2,r,0,Math.PI*2);ctx.fillStyle=leg.color;ctx.fill();
+        xx+=spacing;
+      }
+    } else {
+      ctx.fillStyle=leg.color+'44';ctx.fillRect(obj.x,obj.y,obj.w,obj.h);ctx.strokeRect(obj.x,obj.y,obj.w,obj.h);
+    }
   }
   if(obj.name){
     const fs=12/vp.s;
@@ -852,10 +884,7 @@ function buildUI(){
   });
   LEGEND.forEach(leg=>{
     const d=document.createElement('div');d.className='tool-row';d.dataset.id=leg.id;d.style.color=leg.color;d.onclick=()=>activTool(leg.id);
-    let sym='';
-    if(leg.type==='line')sym=`<svg viewBox="0 0 36 18" width="36" height="18"><line x1="3" y1="9" x2="33" y2="9" stroke="${leg.color}" stroke-width="2.5"/></svg>`;
-    else if(leg.type==='rect')sym=`<svg viewBox="0 0 36 18" width="36" height="18"><rect x="4" y="3" width="28" height="12" fill="${leg.color}55" stroke="${leg.color}" stroke-width="1.5"/></svg>`;
-    else sym=`<svg viewBox="0 0 36 18" width="36" height="18"><circle cx="18" cy="9" r="7" fill="${leg.color}55" stroke="${leg.color}" stroke-width="1.5"/></svg>`;
+    const sym=makeLegendSym(leg);
     d.innerHTML=`<div class="t-sym">${sym}</div><div style="flex:1;"><div class="t-name">${leg.name}</div><div class="t-hint">${leg.hint}</div></div>`;
     document.getElementById('tList').appendChild(d);
   });
@@ -870,6 +899,29 @@ function buildUI(){
   });
   const rows=[['1구역','B','측구 1-1','플륨관','B=300 H=300','04.22~05.07'],['','','측구 1-2','플륨관','B=300 H=300',''],['','','측구 1-3','PY배수로','B1=200 B2=350 H=300',''],['2구역','C','-','-','-','-'],['3구역','B','측구 3-3','플륨관','B=300 H=300','05.08~05.21'],['','','측구 3-5','플륨관','B=300 H=300',''],['','','측구 3-6','플륨관','B=300 H=300',''],['4구역','A','측구 4-1','콘크리트 V형 개거','B1=850 B2=500 H=600','04.01~04.21'],['','','측구 4-2','플륨관','B=600 H=600',''],['','','측구 4-3','플륨관','B=600 H=600',''],['5구역','C','측구 5-1','콘크리트 V형 개거','B1=850 B2=500 H=600','05.22~05.29'],['','','측구 5-2','플륨관','B=600 H=600',''],['6구역','C','-','-','-','-']];
   document.getElementById('planW').innerHTML=`<table class="pl"><thead><tr><th>구역</th><th>등급</th><th>준설 개소</th><th>측구 유형</th><th>규격</th><th>예정 기간</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r[0]?`<b>${r[0]}</b>`:''}</td><td>${r[1]?`<span class="z-grade g-${r[1]}">${r[1]}</span>`:''}</td><td>${r[2]}</td><td>${r[3]}</td><td style="font-family:'JetBrains Mono',monospace;font-size:9px;">${r[4]}</td><td>${r[5]}</td></tr>`).join('')}</tbody></table><div style="padding:6px 10px;font-size:9px;color:#9ca3af;">※ 주말·공휴일 제외</div>`;
+}
+
+// ── 범례 심볼 SVG ──
+function makeLegendSym(leg){
+  const c=leg.color;
+  switch(leg.type){
+    case 'line':
+      return `<svg viewBox="0 0 36 18" width="36" height="18"><line x1="2" y1="9" x2="34" y2="9" stroke="${c}" stroke-width="3"/></svg>`;
+    case 'dotline':
+      // 안전휀스: 갈색 점선
+      return `<svg viewBox="0 0 36 18" width="36" height="18"><line x1="2" y1="9" x2="34" y2="9" stroke="${c}" stroke-width="3" stroke-dasharray="3,3"/></svg>`;
+    case 'dblline':
+      // 도수로: 이중 노란선
+      return `<svg viewBox="0 0 36 18" width="36" height="18"><line x1="2" y1="6" x2="34" y2="6" stroke="${c}" stroke-width="2.5"/><line x1="2" y1="12" x2="34" y2="12" stroke="${c}" stroke-width="2.5"/></svg>`;
+    case 'dotfill':
+      // 토사막힘: 빨간원+노란배경
+      return `<svg viewBox="0 0 36 18" width="36" height="18"><rect x="2" y="4" width="32" height="10" fill="#FFD700" rx="2"/><circle cx="8" cy="9" r="3" fill="${c}"/><circle cx="16" cy="9" r="3" fill="${c}"/><circle cx="24" cy="9" r="3" fill="${c}"/><circle cx="32" cy="9" r="3" fill="${c}"/></svg>`;
+    case 'rect':
+      // 집수정: 노란 테두리 사각형
+      return `<svg viewBox="0 0 36 18" width="36" height="18"><rect x="10" y="3" width="16" height="12" fill="white" stroke="${c}" stroke-width="3"/></svg>`;
+    default:
+      return `<svg viewBox="0 0 36 18" width="36" height="18"><line x1="2" y1="9" x2="34" y2="9" stroke="${c}" stroke-width="2.5"/></svg>`;
+  }
 }
 
 // ── 탭 ──
