@@ -295,8 +295,9 @@ table.pl tr:hover td{background:var(--sur2);}
 <script>
 // ── CONFIG ──
 const GH_OWNER='JasonYhim',GH_REPO='drainage-map',GH_BRANCH='main';
-const GH_SAT_URL=`https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/data/satellite.jpg`;
-const GH_SHAPES_URL=`https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/data/shapes.json`;
+// jsDelivr CDN - CORS 완전 지원, GitHub raw보다 안정적
+const GH_SAT_URL=`https://cdn.jsdelivr.net/gh/${GH_OWNER}/${GH_REPO}@${GH_BRANCH}/data/satellite.jpg`;
+const GH_SHAPES_URL=`https://cdn.jsdelivr.net/gh/${GH_OWNER}/${GH_REPO}@${GH_BRANCH}/data/shapes.json`;
 const GH_OBJECTS_FILE='data/objects.json';
 
 // 이미지 원본 크기 (7712x2428)
@@ -387,23 +388,33 @@ async function loadSatellite(){
     satImg.onload=()=>resolve(true);
     satImg.onerror=()=>{console.warn('위성사진 로드 실패');resolve(false);};
     satImg.crossOrigin='anonymous';
-    satImg.src=GH_SAT_URL+'?t='+Date.now();
+    satImg.src=GH_SAT_URL;
     // fallback: 캐시된 버전
     satImg.onerror=()=>{satImg.src=GH_SAT_URL;resolve(false);};
   });
 }
 
 async function loadShapes(){
-  try{
-    const r=await fetch(GH_SHAPES_URL+'?t='+Date.now());
-    if(!r.ok)throw new Error(r.status);
-    SHAPES=await r.json();
-    setLoad(50,`도형 ${SHAPES.length}개 로드 완료`);
-    return true;
-  }catch(e){
-    console.warn('shapes.json 로드 실패:',e);
-    return false;
+  const urls=[
+    GH_SHAPES_URL,
+    `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/${GH_BRANCH}/data/shapes.json`
+  ];
+  for(const url of urls){
+    try{
+      setLoad(30,`도형 데이터 로딩 중...`);
+      const r=await fetch(url);
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      SHAPES=await r.json();
+      setLoad(50,`도형 ${SHAPES.length}개 로드 완료`);
+      return true;
+    }catch(e){
+      console.warn('shapes 로드 실패('+url+'):', e.message);
+    }
   }
+  // 모두 실패시
+  setLoad(50,'⚠ 도형 로드 실패 - 위성사진만 표시');
+  document.getElementById('loadTxt').style.color='#f87171';
+  return false;
 }
 
 function resize(){
