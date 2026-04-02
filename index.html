@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>차량기지 시설물 관리</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
 :root{
@@ -159,6 +160,15 @@ table.pl tr:hover td{background:var(--sur2);}
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:3px;}
+/* 전체목록 테이블 - 가로 스크롤 없이 */
+#objTable{table-layout:fixed;width:100%;}
+#objTable td,#objTable th{overflow:hidden;text-overflow:ellipsis;}
+.cell-input{width:100%;background:transparent;border:none;color:var(--txt2);font-size:10px;font-family:inherit;padding:0;min-width:0;}
+.cell-input:focus{outline:none;color:var(--txt);background:var(--sur2);border-radius:2px;padding:1px 3px;}
+.cell-select{width:100%;background:transparent;border:none;color:var(--txt2);font-size:10px;font-family:inherit;padding:0;cursor:pointer;}
+.cell-select:focus{outline:none;color:var(--txt);}
+.del-row{background:none;border:none;color:var(--txt3);cursor:pointer;font-size:12px;padding:0;}
+.del-row:hover{color:var(--red);}
 </style>
 </head>
 <body>
@@ -192,10 +202,7 @@ table.pl tr:hover td{background:var(--sur2);}
   <button class="h-btn" onclick="viewAll()">⊞ 전체보기</button>
   <button class="h-btn" id="btnPan" onclick="setTool('pan')">✋ 이동</button>
   <button class="h-btn on" id="btnSel" onclick="setTool('sel')">↖ 선택</button>
-  <label class="h-btn" style="cursor:pointer;">
-    <input type="checkbox" id="chkBox" style="display:none;" onchange="boxSelMode=this.checked">
-    ⬚ 범위선택
-  </label>
+
   <div class="h-sep"></div>
   <button class="h-btn on" id="btnOv" onclick="toggleOv()">📐 정점보기</button>
   <div class="h-right">
@@ -203,10 +210,7 @@ table.pl tr:hover td{background:var(--sur2);}
     <button class="btn-o" onclick="openPatModal()">🔑 토큰</button>
     <button class="btn-o" onclick="loadFromGitHub()">☁ 불러오기</button>
     <button class="btn-o" id="ghSaveBtn" onclick="saveToGitHub()">💾 GitHub 저장</button>
-    <button class="btn-o" onclick="exportJSON()">⬇ 로컬저장</button>
-    <button class="btn-o" onclick="document.getElementById('fi').click()">📂 로컬불러오기</button>
-    <button class="btn-p" onclick="exportCSV()">↓ CSV</button>
-    <input type="file" id="fi" accept=".json" style="display:none" onchange="onLoad(this)">
+    <button class="btn-p" onclick="exportCSV()">↓ CSV 다운로드</button>
   </div>
 </header>
 
@@ -269,20 +273,33 @@ table.pl tr:hover td{background:var(--sur2);}
   </div>
   <div class="bottom">
     <div class="tab-bar">
-      <div class="tab on" id="tt-obj" onclick="sw('obj')">선택 객체</div>
-      <div class="tab" id="tt-list" onclick="sw('list')">전체 목록 <span class="tab-badge" id="lbadge">0</span></div>
+      <div class="tab" id="tt-obj" onclick="sw('obj')">선택 객체</div>
+      <div class="tab on" id="tt-list" onclick="sw('list')">전체 목록 <span class="tab-badge" id="lbadge">0</span></div>
       <div class="tab" id="tt-zone" onclick="sw('zone')">구역 정보</div>
       <div class="tab" id="tt-plan" onclick="sw('plan')">준설 계획</div>
     </div>
     <div class="tab-content">
-      <div class="tab-pane on" id="tp-obj">
+      <div class="tab-pane" id="tp-obj">
         <div class="empty" id="oe"><span class="empty-ico">🔍</span><span class="empty-txt">객체를 클릭하거나 영역을 드래그하여 선택하세요</span></div>
         <div class="obj-grid" id="og" style="display:none;"></div>
       </div>
-      <div class="tab-pane" id="tp-list">
+      <div class="tab-pane on" id="tp-list">
         <div class="obj-tw">
-          <table class="ol"><thead><tr><th>#</th><th>레이어</th><th>ID</th><th>유형</th><th>구역</th><th>명칭</th><th>메모</th><th>생성일</th></tr></thead>
-          <tbody id="olb"></tbody></table>
+          <table class="ol" id="objTable">
+            <thead><tr>
+              <th style="width:28px">#</th>
+              <th style="width:54px">레이어</th>
+              <th style="width:42px">ID</th>
+              <th style="width:90px">유형</th>
+              <th style="width:54px">구역</th>
+              <th style="width:54px">규격</th>
+              <th style="width:64px">상태</th>
+              <th style="min-width:80px;width:auto">기타(메모)</th>
+              <th style="width:72px">생성일</th>
+              <th style="width:28px"></th>
+            </tr></thead>
+            <tbody id="olb"></tbody>
+          </table>
         </div>
       </div>
       <div class="tab-pane" id="tp-zone"><div class="zcards" id="zcards"></div></div>
@@ -666,7 +683,7 @@ function onMD(e){
   if(e.button===1||(tool==='pan'&&e.button===0)){isPan=true;panSt={cx,cy,vx:vp.x,vy:vp.y};document.getElementById('cw').classList.add('dragging');return;}
   if(tool==='draw'&&drawId){
     const leg=LEGEND.find(l=>l.id===drawId);if(!leg)return;
-    if(leg.type==='line'){if(!drawActive){drawActive=true;drawPts=[wp];}else drawPts.push(wp);drawPrev(wp);}
+    if(['line','dotline','dblline'].includes(leg.type)){if(!drawActive){drawActive=true;drawPts=[wp];}else drawPts.push(wp);drawPrev(wp);}
     else if(leg.type==='circle'){const rr=18/vp.s;addObj({legendId:drawId,layer:'user',type:'circle',x:wp.x-rr,y:wp.y-rr,w:rr*2,h:rr*2});}
     else{drawActive=true;drawPts=[wp];}
     return;
@@ -701,7 +718,7 @@ function onMU(e){
   if(isBox&&boxSt){isBox=false;if(boxRect&&(boxRect.w>5/vp.s||boxRect.h>5/vp.s))selBox(boxRect);boxRect=null;boxSt=null;schedRender();return;}
   if(tool==='draw'&&drawId&&drawActive){
     const leg=LEGEND.find(l=>l.id===drawId);
-    if(leg&&leg.type==='rect'){
+    if(leg&&['rect','dotfill'].includes(leg.type)){
       const dx=wp.x-drawPts[0].x,dy=wp.y-drawPts[0].y;
       if(Math.abs(dx)>5/vp.s||Math.abs(dy)>5/vp.s)addObj({legendId:drawId,layer:'user',type:'rect',x:Math.min(drawPts[0].x,wp.x),y:Math.min(drawPts[0].y,wp.y),w:Math.abs(dx),h:Math.abs(dy)});
       drawActive=false;drawPts=[];ctxD.clearRect(0,0,W,H);
@@ -712,7 +729,7 @@ function onMU(e){
 function onDbl(e){
   if(tool==='draw'&&drawId&&drawActive){
     const leg=LEGEND.find(l=>l.id===drawId);
-    if(leg&&leg.type==='line'&&drawPts.length>=2)addObj({legendId:drawId,layer:'user',type:'line',pts:[...drawPts]});
+    if(leg&&['line','dotline','dblline'].includes(leg.type)&&drawPts.length>=2)addObj({legendId:drawId,layer:'user',type:'line',pts:[...drawPts]});
     drawActive=false;drawPts=[];ctxD.clearRect(0,0,W,H);
   }
   schedRender();
@@ -727,7 +744,7 @@ function onKey(e){
   if(e.key==='Escape'){if(drawActive){drawActive=false;drawPts=[];ctxD.clearRect(0,0,W,H);}selObjs=[];showObj();schedRender();}
   if(e.key==='Enter'&&tool==='draw'&&drawId&&drawActive){
     const leg=LEGEND.find(l=>l.id===drawId);
-    if(leg&&leg.type==='line'&&drawPts.length>=2)addObj({legendId:drawId,layer:'user',type:'line',pts:[...drawPts]});
+    if(leg&&['line','dotline','dblline'].includes(leg.type)&&drawPts.length>=2)addObj({legendId:drawId,layer:'user',type:'line',pts:[...drawPts]});
     drawActive=false;drawPts=[];ctxD.clearRect(0,0,W,H);schedRender();
   }
   if((e.key==='Delete'||e.key==='Backspace')&&selObjs.length&&document.activeElement===document.body){
@@ -743,11 +760,11 @@ function drawPrev(wp){
   ctxD.clearRect(0,0,W,H);const leg=LEGEND.find(l=>l.id===drawId);if(!leg)return;
   ctxD.save();ctxD.translate(vp.x,vp.y);ctxD.scale(vp.s,vp.s);
   ctxD.strokeStyle=leg.color;ctxD.fillStyle=leg.color+'44';ctxD.lineWidth=2/vp.s;ctxD.setLineDash([4/vp.s,2/vp.s]);
-  if(leg.type==='line'&&drawActive&&drawPts.length){
+  if(['line','dotline','dblline'].includes(leg.type)&&drawActive&&drawPts.length){
     ctxD.beginPath();ctxD.moveTo(drawPts[0].x,drawPts[0].y);
     for(const p of drawPts.slice(1))ctxD.lineTo(p.x,p.y);ctxD.lineTo(wp.x,wp.y);ctxD.stroke();
     for(const p of drawPts){ctxD.beginPath();ctxD.arc(p.x,p.y,4/vp.s,0,Math.PI*2);ctxD.fillStyle=leg.color;ctxD.fill();}
-  } else if(leg.type==='rect'&&drawActive&&drawPts.length){
+  } else if(['rect','dotfill'].includes(leg.type)&&drawActive&&drawPts.length){
     const rx=Math.min(drawPts[0].x,wp.x),ry=Math.min(drawPts[0].y,wp.y);
     ctxD.fillRect(rx,ry,Math.abs(wp.x-drawPts[0].x),Math.abs(wp.y-drawPts[0].y));
     ctxD.strokeRect(rx,ry,Math.abs(wp.x-drawPts[0].x),Math.abs(wp.y-drawPts[0].y));
@@ -866,23 +883,44 @@ function setF(i,f,v){if(userObjs[i])userObjs[i][f]=v;refList();}
 function delSel(){userObjs=userObjs.filter((_,i)=>!selObjs.includes(i));selObjs=[];showObj();refList();updateSt();schedRender();}
 function refList(){
   document.getElementById('lbadge').textContent=userObjs.length;
+  const zones=Object.keys(ZONES);
+  const statuses=['정상','주의','불량','완료'];
+  const layers=['user','pts'];
   document.getElementById('olb').innerHTML=userObjs.map((obj,i)=>{
-    const leg=LEGEND.find(l=>l.id===obj.legendId);const isSel=selObjs.includes(i);
+    const leg=LEGEND.find(l=>l.id===obj.legendId);
+    const isSel=selObjs.includes(i);
+    const c=leg?.color||'#888';
+    const lyrOpts=layers.map(l=>`<option value="${l}" ${obj.layer===l?'selected':''}>${{user:'밑그림',pts:'점검'}[l]}</option>`).join('');
+    const zoneOpts=`<option value="">-</option>`+zones.map(z=>`<option ${obj.zone===z?'selected':''}>${z}</option>`).join('');
+    const statOpts=statuses.map(s=>`<option ${obj.status===s?'selected':''}>${s}</option>`).join('');
     return`<tr class="${isSel?'sel':''}" onclick="selRow(${i},event)">
-      <td>${i+1}</td><td><span style="color:${leg?.color||'#333'}">${{user:'밑그림',pts:'점검'}[obj.layer]||obj.layer}</span></td>
-      <td>#${obj.id}</td><td><span class="dot" style="background:${leg?.color||'#333'}"></span>${leg?.name||obj.legendId}</td>
-      <td>${obj.zone||'미지정'}</td>
-      <td><input value="${obj.name||''}" placeholder="명칭..." oninput="setF(${i},'name',this.value)" onclick="event.stopPropagation()"></td>
-      <td><input value="${obj.memo||''}" placeholder="메모..." oninput="setF(${i},'memo',this.value)" onclick="event.stopPropagation()"></td>
-      <td>${obj.date}</td></tr>`;
+      <td style="text-align:center;color:var(--txt3)">${i+1}</td>
+      <td><select class="cell-select" onchange="setF(${i},'layer',this.value)" onclick="e=>e.stopPropagation()">${lyrOpts}</select></td>
+      <td><input class="cell-input" value="${obj.id||''}" placeholder="ID" oninput="setF(${i},'id',+this.value||this.value)" onclick="event.stopPropagation()"></td>
+      <td><span class="dot" style="background:${c}"></span><span style="font-size:9px">${leg?.name||obj.legendId}</span></td>
+      <td><select class="cell-select" onchange="setF(${i},'zone',this.value)" onclick="e=>e.stopPropagation()">${zoneOpts}</select></td>
+      <td><input class="cell-input" value="${obj.spec||''}" placeholder="규격..." oninput="setF(${i},'spec',this.value)" onclick="event.stopPropagation()"></td>
+      <td><select class="cell-select" onchange="setF(${i},'status',this.value)" onclick="e=>e.stopPropagation()">${statOpts}</select></td>
+      <td><input class="cell-input" value="${obj.memo||''}" placeholder="메모..." oninput="setF(${i},'memo',this.value)" onclick="event.stopPropagation()"></td>
+      <td style="font-size:9px;color:var(--txt3)">${obj.date}</td>
+      <td><button class="del-row" onclick="event.stopPropagation();delRow(${i})" title="삭제">✕</button></td>
+    </tr>`;
   }).join('');
+}
+function delRow(i){
+  if(!confirm('삭제하시겠습니까?'))return;
+  userObjs=userObjs.filter((_,idx)=>idx!==i);
+  selObjs=selObjs.filter(s=>s!==i).map(s=>s>i?s-1:s);
+  showObj();refList();updateSt();schedRender();
 }
 function selRow(i,e){
   if(e.ctrlKey||e.metaKey){if(selObjs.includes(i))selObjs=selObjs.filter(x=>x!==i);else selObjs.push(i);}else selObjs=[i];
-  showObj();sw('obj');
+  showObj();
+  // 지도에서 해당 객체 위치로 이동
   const obj=userObjs[i];if(!obj)return;
   const wx=obj.pts?obj.pts[0].x:obj.x+(obj.w||0)/2,wy=obj.pts?obj.pts[0].y:obj.y+(obj.h||0)/2;
-  vp.x=W/2-wx*vp.s;vp.y=H/2-wy*vp.s;refList();schedRender();
+  vp.x=W/2-wx*vp.s;vp.y=H/2-wy*vp.s;
+  refList();schedRender();
 }
 
 // ── UI 빌드 ──
@@ -937,6 +975,7 @@ function makeLegendSym(leg){
 
 // ── 탭 ──
 function sw(id){['obj','list','zone','plan'].forEach(t=>{document.getElementById('tt-'+t).classList.toggle('on',t===id);document.getElementById('tp-'+t).classList.toggle('on',t===id);});}
+// 초기 탭: 전체목록
 
 // ── GitHub ──
 function getPat(){return localStorage.getItem('drainage_pat')||'';}
@@ -968,10 +1007,47 @@ async function saveToGitHub(){
   }catch(e){alert('오류: '+e.message);btn.textContent='💾 GitHub 저장';btn.disabled=false;}
 }
 
-// ── 로컬 저장 ──
-function exportJSON(){dl(URL.createObjectURL(new Blob([JSON.stringify({date:new Date().toISOString(),objects:userObjs},null,2)],{type:'application/json'})),`배수로_${tod()}.json`);}
-function onLoad(inp){const f=inp.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{try{const d=JSON.parse(e.target.result);if(d.objects){userObjs=d.objects;nextId=Math.max(0,...userObjs.map(o=>o.id||0))+1;}selObjs=[];showObj();refList();updateSt();schedRender();}catch{alert('파일 오류');}};r.readAsText(f);inp.value='';}
-function exportCSV(){const h='#,레이어,ID,유형,구역,명칭,상태,규격,메모,생성일';const rows=userObjs.map((o,i)=>{const leg=LEGEND.find(l=>l.id===o.legendId);return[i+1,{user:'밑그림',pts:'점검'}[o.layer],o.id,leg?.name||o.legendId,o.zone||'미지정',o.name||'',o.status||'',o.spec||'',o.memo||'',o.date].map(v=>`"${v}"`).join(',');});dl(URL.createObjectURL(new Blob([[h,...rows].join('\n')],{type:'text/csv'})),`배수로_${tod()}.csv`);}
+function exportCSV(){
+  if(!userObjs.length){alert('저장할 데이터가 없습니다.');return;}
+  const COLS=['레이어','ID','유형','구역','규격','상태','기타(메모)','생성일'];
+  const rows=userObjs.map(o=>{
+    const leg=LEGEND.find(l=>l.id===o.legendId);
+    return[
+      {user:'밑그림',pts:'점검'}[o.layer]||o.layer,
+      o.id||'',
+      leg?.name||o.legendId,
+      o.zone||'',
+      o.spec||'',
+      o.status||'정상',
+      o.memo||'',
+      o.date||''
+    ];
+  });
+  // SheetJS로 xlsx 생성
+  const wb=XLSX.utils.book_new();
+  const wsData=[COLS,...rows];
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  // 열 너비
+  ws['!cols']=[{wch:8},{wch:8},{wch:18},{wch:8},{wch:14},{wch:8},{wch:24},{wch:12}];
+  // 테두리 스타일
+  const borderStyle={style:'thin',color:{rgb:'000000'}};
+  const border={top:borderStyle,bottom:borderStyle,left:borderStyle,right:borderStyle};
+  const range=XLSX.utils.decode_range(ws['!ref']);
+  for(let R=range.s.r;R<=range.e.r;R++){
+    for(let C=range.s.c;C<=range.e.c;C++){
+      const cell_ref=XLSX.utils.encode_cell({r:R,c:C});
+      if(!ws[cell_ref])ws[cell_ref]={v:'',t:'s'};
+      ws[cell_ref].s={
+        border,
+        font:{bold:R===0},
+        fill:R===0?{fgColor:{rgb:'E8EAED'}}:{},
+        alignment:{vertical:'center',horizontal:'center',wrapText:false}
+      };
+    }
+  }
+  XLSX.utils.book_append_sheet(wb,ws,'TD_data');
+  XLSX.writeFile(wb,`TD_data_${tod()}.xlsx`);
+}
 function dl(url,name){const a=document.createElement('a');a.href=url;a.download=name;a.click();}
 function tod(){return new Date().toLocaleDateString('ko-KR').replace(/\.\s*/g,'-').replace(/-$/,'');}
 function updateSt(){document.getElementById('st-z').textContent=`zoom:${Math.round(vp.s*100)}%`;document.getElementById('st-s').textContent=`선택:${selObjs.length}`;document.getElementById('st-o').textContent=`객체:${userObjs.length}`;}
