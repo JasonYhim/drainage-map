@@ -169,6 +169,13 @@ table.pl tr:hover td{background:var(--sur2);}
 .cell-select:focus{outline:none;color:var(--txt);}
 .del-row{background:none;border:none;color:var(--txt3);cursor:pointer;font-size:12px;padding:0;}
 .del-row:hover{color:var(--red);}
+/* 준설계획 인라인 편집 */
+.pl-input{width:100%;background:transparent;border:none;color:var(--txt2);font-size:10px;font-family:inherit;padding:1px 2px;}
+.pl-input:focus{outline:none;background:var(--sur2);border-radius:2px;color:var(--txt);}
+.pl-input.bold-inp{font-weight:700;color:var(--txt);}
+.pl-input.mono-inp{font-family:'JetBrains Mono',monospace;font-size:9px;}
+.pl-select{width:100%;background:transparent;border:none;color:var(--txt2);font-size:10px;font-family:inherit;cursor:pointer;}
+.pl-select:focus{outline:none;}
 </style>
 </head>
 <body>
@@ -287,16 +294,16 @@ table.pl tr:hover td{background:var(--sur2);}
         <div class="obj-tw">
           <table class="ol" id="objTable">
             <thead><tr>
-              <th style="width:28px">#</th>
-              <th style="width:54px">레이어</th>
-              <th style="width:42px">ID</th>
-              <th style="width:90px">유형</th>
-              <th style="width:54px">구역</th>
-              <th style="width:54px">규격</th>
-              <th style="width:64px">상태</th>
-              <th style="min-width:80px;width:auto">기타(메모)</th>
-              <th style="width:72px">생성일</th>
-              <th style="width:28px"></th>
+              <th style="width:3%">#</th>
+              <th style="width:8%">레이어</th>
+              <th style="width:5%">ID</th>
+              <th style="width:13%">유형</th>
+              <th style="width:7%">구역</th>
+              <th style="width:10%">규격</th>
+              <th style="width:7%">상태</th>
+              <th style="width:auto">기타(메모)</th>
+              <th style="width:9%">생성일</th>
+              <th style="width:3%"></th>
             </tr></thead>
             <tbody id="olb"></tbody>
           </table>
@@ -353,6 +360,22 @@ let isBox=false,boxSt=null,boxRect=null,boxSelMode=false;
 let selZone=null,selObjs=[],userObjs=[],nextId=1,showOv=true;
 let _dwgCache=null,_dwgBri=-1;
 let dataLoaded=false;
+let undoStack=[]; // Ctrl+Z 되돌리기 스택 (최대 30단계)
+let planData=[
+  ['1구역','B','측구 1-1','플륨관','B=300 H=300','04.22~05.07'],
+  ['','','측구 1-2','플륨관','B=300 H=300',''],
+  ['','','측구 1-3','PY배수로','B1=200 B2=350 H=300',''],
+  ['2구역','C','-','-','-','-'],
+  ['3구역','B','측구 3-3','플륨관','B=300 H=300','05.08~05.21'],
+  ['','','측구 3-5','플륨관','B=300 H=300',''],
+  ['','','측구 3-6','플륨관','B=300 H=300',''],
+  ['4구역','A','측구 4-1','콘크리트 V형 개거','B1=850 B2=500 H=600','04.01~04.21'],
+  ['','','측구 4-2','플륨관','B=600 H=600',''],
+  ['','','측구 4-3','플륨관','B=600 H=600',''],
+  ['5구역','C','측구 5-1','콘크리트 V형 개거','B1=850 B2=500 H=600','05.22~05.29'],
+  ['','','측구 5-2','플륨관','B=600 H=600',''],
+  ['6구역','C','-','-','-','-']
+];
 
 // ── LOADING ──
 function setLoad(pct,txt){
@@ -747,12 +770,26 @@ function onKey(e){
     if(leg&&['line','dotline','dblline'].includes(leg.type)&&drawPts.length>=2)addObj({legendId:drawId,layer:'user',type:'line',pts:[...drawPts]});
     drawActive=false;drawPts=[];ctxD.clearRect(0,0,W,H);schedRender();
   }
-  if((e.key==='Delete'||e.key==='Backspace')&&selObjs.length&&document.activeElement===document.body){
-    userObjs=userObjs.filter((_,i)=>!selObjs.includes(i));selObjs=[];showObj();refList();updateSt();schedRender();
+  if((e.key==='Delete'||e.key==='Backspace')&&selObjs.length){
+    // input/select/textarea에 포커스 있으면 객체 삭제 금지
+    const ae=document.activeElement;
+    const isEditing=ae&&(ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.tagName==='TEXTAREA'||ae.isContentEditable);
+    if(!isEditing){
+      // Ctrl+Z 스택에 저장 후 삭제
+      pushUndo();
+      userObjs=userObjs.filter((_,i)=>!selObjs.includes(i));
+      selObjs=[];showObj();refList();updateSt();schedRender();
+    }
   }
   if(e.key==='s'&&!e.ctrlKey)setTool('sel');
   if(e.key==='p'&&!e.ctrlKey)setTool('pan');
   if(e.key==='+'||e.key==='=')zoom(1.2);if(e.key==='-')zoom(.833);
+  // Ctrl+Z: 되돌리기
+  if((e.key==='z'||e.key==='Z')&&(e.ctrlKey||e.metaKey)){
+    const ae=document.activeElement;
+    const isEditing=ae&&(ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.tagName==='TEXTAREA');
+    if(!isEditing){e.preventDefault();undo();}
+  }
 }
 
 // ── 그리기 미리보기 ──
@@ -813,8 +850,9 @@ function selBox(box){
 
 // ── 도구 ──
 function addObj(props){
+  pushUndo(); // 추가 전 상태 저장
   const obj={id:nextId++,layer:'user',name:'',memo:'',zone:selZone||'',date:tod(),status:'정상',spec:'',...props};
-  userObjs.push(obj);selObjs=[userObjs.length-1];showObj();refList();updateSt();sw('obj');schedRender();
+  userObjs.push(obj);selObjs=[userObjs.length-1];showObj();refList();updateSt();schedRender();
 }
 function setTool(t){
   tool=t;const cw=document.getElementById('cw');
@@ -880,7 +918,7 @@ function showObj(){
     <div class="ok"></div><div class="ov" style="grid-column:span 5;padding-top:6px;"><button class="del-btn" onclick="delSel()">🗑 삭제</button></div>`;
 }
 function setF(i,f,v){if(userObjs[i])userObjs[i][f]=v;refList();}
-function delSel(){userObjs=userObjs.filter((_,i)=>!selObjs.includes(i));selObjs=[];showObj();refList();updateSt();schedRender();}
+function delSel(){pushUndo();userObjs=userObjs.filter((_,i)=>!selObjs.includes(i));selObjs=[];showObj();refList();updateSt();schedRender();}
 function refList(){
   document.getElementById('lbadge').textContent=userObjs.length;
   const zones=Object.keys(ZONES);
@@ -895,13 +933,13 @@ function refList(){
     const statOpts=statuses.map(s=>`<option ${obj.status===s?'selected':''}>${s}</option>`).join('');
     return`<tr class="${isSel?'sel':''}" onclick="selRow(${i},event)">
       <td style="text-align:center;color:var(--txt3)">${i+1}</td>
-      <td><select class="cell-select" onchange="setF(${i},'layer',this.value)" onclick="e=>e.stopPropagation()">${lyrOpts}</select></td>
-      <td><input class="cell-input" value="${obj.id||''}" placeholder="ID" oninput="setF(${i},'id',+this.value||this.value)" onclick="event.stopPropagation()"></td>
+      <td><select class="cell-select" onchange="setF(${i},'layer',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()">${lyrOpts}</select></td>
+      <td><input class="cell-input" value="${obj.id||''}" placeholder="ID" oninput="setF(${i},'id',+this.value||this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"></td>
       <td><span class="dot" style="background:${c}"></span><span style="font-size:9px">${leg?.name||obj.legendId}</span></td>
-      <td><select class="cell-select" onchange="setF(${i},'zone',this.value)" onclick="e=>e.stopPropagation()">${zoneOpts}</select></td>
-      <td><input class="cell-input" value="${obj.spec||''}" placeholder="규격..." oninput="setF(${i},'spec',this.value)" onclick="event.stopPropagation()"></td>
-      <td><select class="cell-select" onchange="setF(${i},'status',this.value)" onclick="e=>e.stopPropagation()">${statOpts}</select></td>
-      <td><input class="cell-input" value="${obj.memo||''}" placeholder="메모..." oninput="setF(${i},'memo',this.value)" onclick="event.stopPropagation()"></td>
+      <td><select class="cell-select" onchange="setF(${i},'zone',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()">${zoneOpts}</select></td>
+      <td><input class="cell-input" value="${obj.spec||''}" placeholder="규격..." oninput="setF(${i},'spec',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"></td>
+      <td><select class="cell-select" onchange="setF(${i},'status',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()">${statOpts}</select></td>
+      <td><input class="cell-input" value="${obj.memo||''}" placeholder="메모..." oninput="setF(${i},'memo',this.value)" onmousedown="event.stopPropagation()" onclick="event.stopPropagation()"></td>
       <td style="font-size:9px;color:var(--txt3)">${obj.date}</td>
       <td><button class="del-row" onclick="event.stopPropagation();delRow(${i})" title="삭제">✕</button></td>
     </tr>`;
@@ -909,6 +947,7 @@ function refList(){
 }
 function delRow(i){
   if(!confirm('삭제하시겠습니까?'))return;
+  pushUndo(); // 삭제 전 상태 저장
   userObjs=userObjs.filter((_,idx)=>idx!==i);
   selObjs=selObjs.filter(s=>s!==i).map(s=>s>i?s-1:s);
   showObj();refList();updateSt();schedRender();
@@ -946,8 +985,7 @@ function buildUI(){
       <div class="zcard-i">${z.items.map(i=>`<div class="zcard-item">• ${i}</div>`).join('')||'<div class="zcard-item">작업 없음</div>'}</div>`;
     zc.appendChild(c);
   });
-  const rows=[['1구역','B','측구 1-1','플륨관','B=300 H=300','04.22~05.07'],['','','측구 1-2','플륨관','B=300 H=300',''],['','','측구 1-3','PY배수로','B1=200 B2=350 H=300',''],['2구역','C','-','-','-','-'],['3구역','B','측구 3-3','플륨관','B=300 H=300','05.08~05.21'],['','','측구 3-5','플륨관','B=300 H=300',''],['','','측구 3-6','플륨관','B=300 H=300',''],['4구역','A','측구 4-1','콘크리트 V형 개거','B1=850 B2=500 H=600','04.01~04.21'],['','','측구 4-2','플륨관','B=600 H=600',''],['','','측구 4-3','플륨관','B=600 H=600',''],['5구역','C','측구 5-1','콘크리트 V형 개거','B1=850 B2=500 H=600','05.22~05.29'],['','','측구 5-2','플륨관','B=600 H=600',''],['6구역','C','-','-','-','-']];
-  document.getElementById('planW').innerHTML=`<table class="pl"><thead><tr><th>구역</th><th>등급</th><th>준설 개소</th><th>측구 유형</th><th>규격</th><th>예정 기간</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r[0]?`<b>${r[0]}</b>`:''}</td><td>${r[1]?`<span class="z-grade g-${r[1]}">${r[1]}</span>`:''}</td><td>${r[2]}</td><td>${r[3]}</td><td style="font-family:'JetBrains Mono',monospace;font-size:9px;">${r[4]}</td><td>${r[5]}</td></tr>`).join('')}</tbody></table><div style="padding:6px 10px;font-size:9px;color:#9ca3af;">※ 주말·공휴일 제외</div>`;
+  renderPlanTable();
 }
 
 // ── 범례 심볼 SVG ──
@@ -971,6 +1009,72 @@ function makeLegendSym(leg){
     default:
       return `<svg viewBox="0 0 36 18" width="36" height="18"><line x1="2" y1="9" x2="34" y2="9" stroke="${c}" stroke-width="2.5"/></svg>`;
   }
+}
+
+// ── 준설 계획 테이블 렌더 ──
+function renderPlanTable(){
+  const grades=['A','B','C'];
+  const el=document.getElementById('planW');
+  if(!el)return;
+  // 인라인 편집 가능한 input 셀로 구성
+  const pinput=(ri,ci,val,cls='')=>`<input
+    class="pl-input${cls?' '+cls:''}"
+    value="${(val||'').replace(/"/g,'&quot;')}"
+    onmousedown="event.stopPropagation()"
+    onclick="event.stopPropagation()"
+    onkeydown="planKeyGuard(event)"
+    oninput="setPlan(${ri},${ci},this.value)">`;
+  const tbody=planData.map((r,ri)=>{
+    const zoneCell=r[0]?`<b>${r[0]}</b>`:'';
+    const gradeCell=r[1]?`<select class="pl-select"
+      onmousedown="event.stopPropagation()"
+      onclick="event.stopPropagation()"
+      onchange="setPlan(${ri},1,this.value)">
+      ${grades.map(g=>`<option ${r[1]===g?'selected':''}>${g}</option>`).join('')}
+    </select>`:'';
+    return`<tr>
+      <td>${zoneCell?pinput(ri,0,r[0],'bold-inp'):''}</td>
+      <td>${gradeCell}</td>
+      <td>${pinput(ri,2,r[2])}</td>
+      <td>${pinput(ri,3,r[3])}</td>
+      <td>${pinput(ri,4,r[4],'mono-inp')}</td>
+      <td>${pinput(ri,5,r[5])}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML=`
+    <table class="pl" style="table-layout:fixed;width:100%;">
+      <thead><tr>
+        <th style="width:10%">구역</th>
+        <th style="width:7%">등급</th>
+        <th style="width:15%">준설 개소</th>
+        <th style="width:18%">측구 유형</th>
+        <th style="width:22%">규격</th>
+        <th style="width:auto">예정 기간</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+    </table>
+    <div style="padding:5px 10px;font-size:9px;color:#9ca3af;">※ 주말·공휴일 제외 / 셀 클릭하여 직접 편집</div>`;
+}
+function setPlan(ri,ci,val){
+  if(planData[ri])planData[ri][ci]=val;
+}
+function planKeyGuard(e){
+  // input 안에서 Delete/Backspace는 텍스트 편집에만 사용
+  e.stopPropagation();
+}
+
+// ── Undo (Ctrl+Z) ──
+function pushUndo(){
+  // 현재 상태 복사 저장 (깊은 복사)
+  undoStack.push(JSON.parse(JSON.stringify(userObjs)));
+  if(undoStack.length>30)undoStack.shift(); // 최대 30단계
+}
+function undo(){
+  if(!undoStack.length){return;}
+  userObjs=undoStack.pop();
+  // nextId 재설정
+  nextId=userObjs.length?Math.max(...userObjs.map(o=>o.id||0))+1:1;
+  selObjs=[];showObj();refList();updateSt();schedRender();
 }
 
 // ── 탭 ──
