@@ -215,9 +215,8 @@ table.pl tr:hover td{background:var(--sur2);}
   <div class="h-right">
     <span id="patStatus" style="font-size:9px;color:var(--txt3);margin-right:4px;"></span>
     <button class="btn-o" onclick="openPatModal()">🔑 토큰</button>
-    <button class="btn-o" onclick="loadFromGitHub()">☁ 불러오기</button>
-    <button class="btn-o" id="ghSaveBtn" onclick="saveToGitHub()">💾 GitHub 저장</button>
-    <button class="btn-p" onclick="exportCSV()">↓ CSV 다운로드</button>
+    <button class="btn-o" id="loadBtn" onclick="loadFromGitHub()" title="GitHub에서 최신 데이터 불러오기">☁ 불러오기</button>
+    <button class="btn-p" id="ghSaveBtn" onclick="saveToGitHub()" title="GitHub 저장 + TD_data.xlsx 로컬 다운로드">💾 저장 &amp; 다운로드</button>
   </div>
 </header>
 
@@ -1086,40 +1085,153 @@ function getPat(){return localStorage.getItem('drainage_pat')||'';}
 function savePat(){const v=document.getElementById('patInput').value.trim();if(!v){alert('토큰을 입력하세요.');return;}localStorage.setItem('drainage_pat',v);closePatModal();updatePatStatus();alert('✅ 저장됐습니다.');}
 function openPatModal(){document.getElementById('patInput').value=getPat();document.getElementById('patModal').classList.add('show');}
 function closePatModal(){document.getElementById('patModal').classList.remove('show');}
-function updatePatStatus(){const pat=getPat(),el=document.getElementById('patStatus');if(el){el.textContent=pat?'✅ 토큰 설정됨':'⚠ 토큰 미설정';el.style.color=pat?'#16a34a':'#b45309';}}
-async function loadFromGitHub(){
+// 앱 시작 시 SHA 미리 확인
+async function prefetchSha(){
   try{
-    const r=await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}?ref=${GH_BRANCH}`,{headers:{'Accept':'application/vnd.github.v3+json'}});
-    if(r.status===404){alert('저장된 객체 데이터가 없습니다.');return;}
-    if(!r.ok){alert('불러오기 실패: '+r.status);return;}
-    const meta=await r.json();window._ghSha=meta.sha;
-    const d=JSON.parse(atob(meta.content.replace(/\n/g,'')));
-    if(d.objects){userObjs=d.objects;nextId=Math.max(0,...userObjs.map(o=>o.id||0))+1;}
-    selObjs=[];showObj();refList();updateSt();schedRender();alert(`✅ ${userObjs.length}개 객체 불러왔습니다.`);
-  }catch(e){alert('오류: '+e.message);}
-}
-async function saveToGitHub(){
-  const pat=getPat();if(!pat){openPatModal();return;}
-  const content=btoa(unescape(encodeURIComponent(JSON.stringify({date:new Date().toISOString(),objects:userObjs},null,2))));
-  const body={message:'📊 객체 업데이트 '+tod(),content};if(window._ghSha)body.sha=window._ghSha;
-  const btn=document.getElementById('ghSaveBtn');btn.textContent='⏳...';btn.disabled=true;
-  try{
-    const r=await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}`,{method:'PUT',headers:{'Authorization':'token '+pat,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},body:JSON.stringify(body)});
-    const result=await r.json();
-    if(r.ok){window._ghSha=result.content?.sha||window._ghSha;btn.textContent='✅ 저장 완료';btn.style.background='#16a34a';btn.style.color='#fff';setTimeout(()=>{btn.textContent='💾 GitHub 저장';btn.style.background='';btn.style.color='';btn.disabled=false;},3000);}
-    else{alert('실패: '+(result.message||r.status));btn.textContent='💾 GitHub 저장';btn.disabled=false;}
-  }catch(e){alert('오류: '+e.message);btn.textContent='💾 GitHub 저장';btn.disabled=false;}
+    const headers={'Accept':'application/vnd.github.v3+json'};
+    const pat=getPat();if(pat)headers['Authorization']='token '+pat;
+    const r=await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}?ref=${GH_BRANCH}`,
+      {headers}
+    );
+    if(r.ok){
+      const meta=await r.json();
+      window._ghSha=meta.sha;
+      // 앱 시작 시 최신 데이터 자동 로드
+      try{
+        const rawContent=meta.content.replace(/[\n\r]/g,'');
+        const d=JSON.parse(atob(rawContent));
+        if(d.objects&&d.objects.length>0){
+          userObjs=d.objects;
+          nextId=userObjs.length?Math.max(...userObjs.map(o=>+o.id||0))+1:1;
+          refList();updateSt();
+          // 로드 완료 표시
+          document.getElementById('st-m').textContent=`자동 로드 완료 (${userObjs.length}개)`;
+          setTimeout(()=>document.getElementById('st-m').textContent='준비',3000);
+          schedRender();
+        }
+      }catch(parseErr){console.warn('자동 로드 파싱 오류:',parseErr);}
+    }
+    // 404이면 파일 없음 (첫 저장) → sha 없이 생성 대기
+  }catch(e){/* 무시 */}
 }
 
-function exportCSV(){
-  if(!userObjs.length){alert('저장할 데이터가 없습니다.');return;}
+function updatePatStatus(){const pat=getPat(),el=document.getElementById('patStatus');if(el){el.textContent=pat?'✅ 토큰 설정됨':'⚠ 토큰 미설정';el.style.color=pat?'#16a34a':'#b45309';}}
+async function loadFromGitHub(){
+  const btn=document.getElementById('loadBtn');
+  if(btn){btn.textContent='⏳ 불러오는 중...';btn.disabled=true;}
+  try{
+    // PAT 있으면 인증 헤더 포함 (private repo 대응)
+    const headers={'Accept':'application/vnd.github.v3+json'};
+    const pat=getPat();if(pat)headers['Authorization']='token '+pat;
+
+    const r=await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}?ref=${GH_BRANCH}`,
+      {headers}
+    );
+    if(r.status===404){
+      alert('아직 저장된 데이터가 없습니다.\nGitHub 저장 버튼으로 먼저 저장해주세요.');
+      return;
+    }
+    if(!r.ok){alert('불러오기 실패: HTTP '+r.status);return;}
+
+    const meta=await r.json();
+    window._ghSha=meta.sha;  // SHA 미리 저장 → 이후 저장 시 바로 사용
+
+    const rawContent=meta.content.replace(/[\n\r]/g,'');
+    const d=JSON.parse(atob(rawContent));
+    if(d.objects){
+      userObjs=d.objects;
+      nextId=userObjs.length?Math.max(...userObjs.map(o=>+o.id||0))+1:1;
+    }
+    selObjs=[];showObj();refList();updateSt();schedRender();
+    // 상태바 업데이트
+    document.getElementById('st-m').textContent='GitHub에서 불러오기 완료';
+    setTimeout(()=>document.getElementById('st-m').textContent='준비',3000);
+    if(userObjs.length===0){
+      alert('✅ 불러오기 완료\n저장된 객체가 없습니다.');
+    } else {
+      alert(`✅ ${userObjs.length}개 객체를 불러왔습니다.\n전체 목록 탭에서 확인하세요.`);
+    }
+  }catch(e){
+    alert('불러오기 오류:\n'+e.message);
+  }finally{
+    if(btn){btn.textContent='☁ 불러오기';btn.disabled=false;}
+  }
+}
+async function saveToGitHub(){
+  const pat=getPat();
+  if(!pat){openPatModal();return;}
+  if(!userObjs.length&&!confirm('저장할 객체가 없습니다. 빈 데이터로 저장하시겠습니까?'))return;
+
+  const btn=document.getElementById('ghSaveBtn');
+  btn.textContent='⏳ SHA 확인...';btn.disabled=true;
+
+  try{
+    // ① 항상 현재 파일의 SHA를 먼저 확인 (없으면 신규 생성)
+    let currentSha=window._ghSha||null;
+    if(!currentSha){
+      const chk=await fetch(
+        `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}?ref=${GH_BRANCH}`,
+        {headers:{'Accept':'application/vnd.github.v3+json','Authorization':'token '+pat}}
+      );
+      if(chk.ok){
+        const meta=await chk.json();
+        currentSha=meta.sha;
+        window._ghSha=currentSha;
+      }
+      // 404이면 파일 없음 → sha 없이 생성 (정상)
+    }
+
+    // ② 저장 데이터 준비
+    btn.textContent='⏳ 저장 중...';
+    const payload={date:new Date().toISOString(),objects:userObjs};
+    const content=btoa(unescape(encodeURIComponent(JSON.stringify(payload,null,2))));
+    const body={message:'📊 객체 업데이트 '+tod(),content};
+    if(currentSha)body.sha=currentSha;  // 기존 파일이면 sha 포함
+
+    // ③ GitHub PUT 요청
+    const r=await fetch(
+      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}`,
+      {method:'PUT',
+       headers:{'Authorization':'token '+pat,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},
+       body:JSON.stringify(body)}
+    );
+    const result=await r.json();
+
+    if(r.ok){
+      window._ghSha=result.content?.sha||currentSha;
+      btn.textContent='✅ 저장 완료';
+      btn.style.background='#16a34a';btn.style.color='#fff';
+      // ── GitHub 저장 성공 후 TD_data.xlsx 자동 다운로드 ──
+      try{
+        exportXlsx();
+      }catch(xlsxErr){
+        console.warn('xlsx 다운로드 오류:', xlsxErr);
+      }
+      setTimeout(()=>{
+        btn.textContent='💾 저장 & 다운로드';
+        btn.style.background='';btn.style.color='';btn.disabled=false;
+      },2500);
+    } else {
+      alert('GitHub 저장 실패:\n'+((result.message)||`HTTP ${r.status}`));
+      btn.textContent='💾 저장 & 다운로드';btn.disabled=false;
+    }
+  }catch(e){
+    alert('저장 오류:\n'+e.message);
+    btn.textContent='💾 GitHub 저장';btn.disabled=false;
+  }
+}
+
+function exportXlsx(){
+  // 데이터 없어도 헤더만으로 빈 파일 생성 가능
   const COLS=['레이어','ID','유형','구역','규격','상태','기타(메모)','생성일'];
   const rows=userObjs.map(o=>{
     const leg=LEGEND.find(l=>l.id===o.legendId);
     return[
       {user:'밑그림',pts:'점검'}[o.layer]||o.layer,
-      o.id||'',
-      leg?.name||o.legendId,
+      String(o.id||''),
+      leg?.name||o.legendId||'',
       o.zone||'',
       o.spec||'',
       o.status||'정상',
@@ -1127,31 +1239,36 @@ function exportCSV(){
       o.date||''
     ];
   });
-  // SheetJS로 xlsx 생성
   const wb=XLSX.utils.book_new();
   const wsData=[COLS,...rows];
   const ws=XLSX.utils.aoa_to_sheet(wsData);
   // 열 너비
-  ws['!cols']=[{wch:8},{wch:8},{wch:18},{wch:8},{wch:14},{wch:8},{wch:24},{wch:12}];
-  // 테두리 스타일
-  const borderStyle={style:'thin',color:{rgb:'000000'}};
-  const border={top:borderStyle,bottom:borderStyle,left:borderStyle,right:borderStyle};
+  ws['!cols']=[{wch:9},{wch:6},{wch:22},{wch:8},{wch:16},{wch:8},{wch:28},{wch:13}];
+  // 행 높이
+  ws['!rows']=[{hpt:18},...rows.map(()=>({hpt:16}))];
+  // 테두리 + 스타일
+  const bdr={style:'thin',color:{rgb:'000000'}};
+  const border={top:bdr,bottom:bdr,left:bdr,right:bdr};
   const range=XLSX.utils.decode_range(ws['!ref']);
   for(let R=range.s.r;R<=range.e.r;R++){
     for(let C=range.s.c;C<=range.e.c;C++){
-      const cell_ref=XLSX.utils.encode_cell({r:R,c:C});
-      if(!ws[cell_ref])ws[cell_ref]={v:'',t:'s'};
-      ws[cell_ref].s={
+      const ref=XLSX.utils.encode_cell({r:R,c:C});
+      if(!ws[ref])ws[ref]={v:'',t:'s'};
+      ws[ref].s={
         border,
-        font:{bold:R===0},
-        fill:R===0?{fgColor:{rgb:'E8EAED'}}:{},
-        alignment:{vertical:'center',horizontal:'center',wrapText:false}
+        font:{name:'맑은 고딕',sz:10,bold:R===0,color:{rgb:R===0?'1A1D23':'333333'}},
+        fill:{fgColor:{rgb:R===0?'D9E1F2':'FFFFFF'},patternType:'solid'},
+        alignment:{vertical:'center',horizontal:C<=1||C===5?'center':'left',wrapText:false}
       };
     }
   }
+  // 첫 행 고정
+  ws['!freeze']={xSplit:0,ySplit:1};
   XLSX.utils.book_append_sheet(wb,ws,'TD_data');
-  XLSX.writeFile(wb,`TD_data_${tod()}.xlsx`);
+  XLSX.writeFile(wb,'TD_data_'+tod()+'.xlsx');
 }
+// 하위 호환
+function exportCSV(){exportXlsx();}
 function dl(url,name){const a=document.createElement('a');a.href=url;a.download=name;a.click();}
 function tod(){return new Date().toLocaleDateString('ko-KR').replace(/\.\s*/g,'-').replace(/-$/,'');}
 function updateSt(){document.getElementById('st-z').textContent=`zoom:${Math.round(vp.s*100)}%`;document.getElementById('st-s').textContent=`선택:${selObjs.length}`;document.getElementById('st-o').textContent=`객체:${userObjs.length}`;}
