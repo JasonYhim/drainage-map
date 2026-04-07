@@ -769,8 +769,7 @@ async function prefetchSha(){
   try{const headers={'Accept':'application/vnd.github.v3+json'};const pat=getPat();if(pat)headers['Authorization']='token '+pat;
     const r=await fetch(`https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_OBJECTS_FILE}?ref=${GH_BRANCH}`,{headers});
     if(r.ok){const meta=await r.json();window._ghSha=meta.sha;
-      try{const d=JSON.parse(atob(meta.content.replace(/[
-]/g,'')));
+      try{const d=JSON.parse(atob(meta.content.split('\n').join('').split('\r').join('')));
         if(d.objects&&d.objects.length>0){userObjs=d.objects;nextId=Math.max(...userObjs.map(o=>+o.id||0))+1;refList();updateSt();
           document.getElementById('st-m').textContent=`자동 로드 완료 (${userObjs.length}개)`;
           setTimeout(()=>document.getElementById('st-m').textContent='준비',3000);schedRender();}}catch(e){}}}catch(e){}
@@ -782,8 +781,7 @@ async function loadFromGitHub(){
     if(r.status===404){alert('저장된 데이터가 없습니다.');return;}
     if(!r.ok){alert('불러오기 실패: HTTP '+r.status);return;}
     const meta=await r.json();window._ghSha=meta.sha;
-    const d=JSON.parse(atob(meta.content.replace(/[
-]/g,'')));
+    const d=JSON.parse(atob(meta.content.split('\n').join('').split('\r').join('')));
     if(d.objects){userObjs=d.objects;nextId=userObjs.length?Math.max(...userObjs.map(o=>+o.id||0))+1:1;}
     selObjs=[];showObj();refList();updateSt();schedRender();
     alert(`✅ ${userObjs.length}개 객체를 불러왔습니다.`);
@@ -825,7 +823,7 @@ function exportXlsx(){
   XLSX.utils.book_append_sheet(wb,ws,'TD_data');
   XLSX.writeFile(wb,'TD_data_'+tod()+'.xlsx');
 }
-function tod(){return new Date().toLocaleDateString('ko-KR').replace(/\.\s*/g,'-').replace(/-$/,'');}
+function tod(){const d=new Date();return d.getFullYear()+'-'+(d.getMonth()+1).toString().padStart(2,'0')+'-'+d.getDate().toString().padStart(2,'0');}
 function updateSt(){document.getElementById('st-z').textContent=`zoom:${Math.round(vp.s*100)}%`;document.getElementById('st-s').textContent=`선택:${selObjs.length}`;document.getElementById('st-o').textContent=`객체:${userObjs.length}`;}
 </script>
 </body>
